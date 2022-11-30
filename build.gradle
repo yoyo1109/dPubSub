@@ -1,0 +1,28 @@
+plugins {
+    id 'java'
+}
+
+group 'edu.scu'
+version '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation files('lib/junit-jupiter-api-5.8.2.jar')
+    testImplementation files('lib/junit-platform-commons-1.8.2.jar')
+    testRuntimeOnly files('lib/junit-jupiter-engine-5.8.2.jar')
+    testImplementation files('lib/apiguardian-api-1.1.2.jar')
+    implementation files('lib/gson-2.10.jar')
+}
+
+test {
+    useJUnitPlatform()
+    // Always run tests, even when nothing changed.
+    dependsOn 'cleanTest'
+    // Show test results.
+    testLogging {
+        events "passed", "skipped", "failed"
+    }
+}
