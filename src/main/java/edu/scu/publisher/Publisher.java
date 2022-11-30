@@ -1,9 +1,8 @@
 package edu.scu.publisher;
 
-import edu.scu.utils.Utils;
 import edu.scu.utils.Utils.ResponseBase;
+
 import java.io.IOException;
-import java.time.LocalDateTime;
 import java.util.Scanner;
 
 import static edu.scu.utils.Utils.SendTo;
