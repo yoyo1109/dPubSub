@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static edu.scu.utils.Utils.ResponseBase;
 import static edu.scu.utils.Utils.SendTo;
+import static java.lang.Thread.sleep;
 
 public class Broker {
     private static int localPort = 6000;
@@ -44,29 +45,22 @@ public class Broker {
         if (args.length > 0) {
             localPort = Integer.parseInt(args[0]);
         }
-        System.out.println("Started Broker at local port " + localPort);
-        // Register this broker to FrontEnd Server.
-        Register();
-
-        // Get current leader broker to update the data
-        currentLeaderBroker = GetLeaderBroker();
-        if (currentLeaderBroker < 0) {
-            System.out.println("Broker " + localPort + " couldn't find a leader broker to update");
-        } else if (currentLeaderBroker == localPort) {
-            System.out.println("Broker " + localPort + " is the leader broker");
-        } else {
-            // if self is not leader, synchronize data with leader broke
-//            StartBrokerSyncThread();
+        currentLeaderBroker = GetCurrentLeaderBroker();
+        if (currentLeaderBroker>0) {
+            System.out.println("Trying to sync with broker");
+            SyncWithLeaderBroker(currentLeaderBroker);
         }
 
-
-        // Start the HeartBeat thread.
+        // Register this broker to FrontEnd Server.
+        Register();
+        // Get current leader broker to update the data.
+        StartBrokerSyncThread();
         StartHeartBeatThread();
-//        StartMessageUpdateThread();
+        GetCurrentLeaderBrokerThread();
 
 
         // Start broker server.
-        System.out.println("Starting FrontEnd Server at port " + localPort);
+        System.out.println("Starting Broker at port " + localPort);
         ServerSocket serverSocket = new ServerSocket(localPort);
 
         while (true) {
@@ -105,7 +99,6 @@ public class Broker {
                         subscriberToTopic.get(subId).put(tokens[i], LocalDateTime.now().toString());
                         System.out.printf("subscriber(%s) subscribed topics:  %s%n", subId, subscriberToTopic.get(subId));
                     }
-
                     break;
                 }
                 case "GetUpdate":
@@ -116,11 +109,9 @@ public class Broker {
 
                 case "Sync":
                     //TODO: sync status between brokers.
-//                    System.out.println("Received Sync request: " + data);
-//                    brokerStates = new BrokerStates();
-
-
-
+                    System.out.println("Received Sync request: " + data);
+                    brokerStates = new BrokerStates(subscriberToTopic, topicToMsgList);
+                    dResult = brokerStates.getSerializedData();
 
                     break;
                 default:
@@ -130,12 +121,9 @@ public class Broker {
             String result = dResult + "";
             connector.writeLine(status);
             connector.writeLine(result);
-
-            // Update subscribers.
         }
     }
 
-    //TODO
 
     private static LocalDateTime ToLocalDateTime(String input) {
         return LocalDateTime.parse(input, timeFormatter);
@@ -154,7 +142,7 @@ public class Broker {
                 // {timestamp -> message}
                 for (Map.Entry<String, String> msgEntry : messageList.entrySet()) {
                     String msg = msgEntry.getValue();
-                    LocalDateTime tMsg =  ToLocalDateTime(msgEntry.getKey());
+                    LocalDateTime tMsg = ToLocalDateTime(msgEntry.getKey());
                     if (tSub.isBefore(tMsg)) {
                         System.out.println("Find message with in time range " + msg);
                         rtn.add(topic + ": " + msg);
@@ -182,54 +170,79 @@ public class Broker {
                 try {
                     Thread.sleep(1000 * heartBeatIntervalSec);
                     SendHeartBeat();
-                } catch (IOException | InterruptedException e) {
-                    System.out.println("ERROR: sending heart beat to FrontEnd, will try againt later.");
+                } catch (InterruptedException e) {
+                    System.out.println("ERROR: sending heart beat to FrontEnd, will try again later.");
                     e.printStackTrace();
                 }
             }
         }).start();
     }
 
-//    public static void SyncWithLeaderBroker(Integer brokerPort) throws IOException {
-//        ResponseBase resp = SendTo("127.0.0.1", brokerPort, "Sync", "");
-//        if (resp.Ok()) {
-//            System.out.println(resp.data);
-//            //TODO save the resp.data
-//        } else {
-//            System.out.println(resp.status);
-//        }
-//    }
-//    private static void StartBrokerSyncThread() {
-//        new Thread(() -> {
-//            System.out.println("Broker sync thread started.");
-//            while (true) {
-//                System.out.println("Trying to sync with broker");
+    public static void SyncWithLeaderBroker(Integer brokerPort) {
+        ResponseBase resp = null;
+        try {
+            resp = SendTo("127.0.0.1", brokerPort, "Sync", "");
+        } catch (IOException e) {
+            System.out.println("Failed to sync with leader broker(" + brokerPort + ")");
+        }
+
+        if (resp.Ok()) {
+            System.out.println("Received Sync data from leader: " + resp.data);
+            brokerStates = new BrokerStates(resp.data);
+            topicToMsgList = brokerStates.getTopicToMsgList();
+            subscriberToTopic = brokerStates.getSubscriberToTopic();
+        } else {
+            System.out.println(resp.status);
+        }
+    }
+
+    private static void StartBrokerSyncThread() {
+        new Thread(() -> {
+            System.out.println("Broker sync thread started.");
+            while (true) {
+                try {
+                    // Only Sync when this broker is not leader, otherwise, just sleep. When
+                    // this broker isn't leader anymore in the future, it can start sync with
+                    // the real leader.
+                    if (currentLeaderBroker != localPort) {
+                        if (currentLeaderBroker>0) {
+                            System.out.println("Trying to sync with broker " + currentLeaderBroker);
+                            SyncWithLeaderBroker(currentLeaderBroker);
+                        } else {
+                            System.out.println("No active broker, wait");
+                        }
+                    } else {
+                        System.out.println("We are the leader, no need to sync.");
+                    }
+                    sleep(10000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
 //                try {
-//                    SyncWithLeaderBroker(currentLeaderBroker);
-//                    Thread.sleep(10000);
-//                } catch (InterruptedException e) {
-//                    e.printStackTrace();
-//                } catch (IOException e) {
-//                    e.printStackTrace();
+//                    currentLeaderBroker = GetLeaderBroker();
+//                    if (currentLeaderBroker > 0 && currentLeaderBroker != localPort) {
+//                        SyncWithLeaderBroker(currentLeaderBroker);
+//                    }
+//                    sleep(1000 * brokerSyncIntervalSec);
+//                } catch (IOException | InterruptedException e) {
+//                    throw new RuntimeException(e);
 //                }
-////                try {
-////                    currentLeaderBroker = GetLeaderBroker();
-////                    if (currentLeaderBroker > 0 && currentLeaderBroker != localPort) {
-////                        SyncWithLeaderBroker(currentLeaderBroker);
-////                    }
-////                    sleep(1000 * brokerSyncIntervalSec);
-////                } catch (IOException | InterruptedException e) {
-////                    throw new RuntimeException(e);
-////                }
-//
-//            }
-//        }).start();
-//    }
+
+            }
+        }).start();
+    }
 
 
-    private static void SendHeartBeat() throws IOException {
+    private static void SendHeartBeat()  {
         String payload = localPort + "," + LocalDateTime.now().toString();
-        ResponseBase resp = SendTo("127.0.0.1", frontEndPort, "HeartBeat", payload);
+        ResponseBase resp = null;
+        try {
+            resp = SendTo("127.0.0.1", frontEndPort, "HeartBeat", payload);
+        } catch (IOException e) {
+            System.out.println("Failed to send heart beat to FrontEnd Server.");
+        }
+
+
         if (resp.Ok()) {
 //            System.out.println("HeartBeat! " + payload);
         } else {
@@ -246,79 +259,34 @@ public class Broker {
         }
     }
 
-    private static Integer GetLeaderBroker() throws IOException {
+    private static void GetCurrentLeaderBrokerThread() {
+        new Thread(() -> {
+            while (true) {
+                try {
+//                    System.out.println("Getting current leader broker from FrontEnd");
+                    sleep(1000);
+                    currentLeaderBroker = GetCurrentLeaderBroker();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
 
-        ResponseBase resp = SendTo("127.0.0.1", frontEndPort, "GetLeaderBroker", Integer.toString(localPort));
-        if (resp.Ok()) {
-            return currentLeaderBroker = Integer.parseInt(resp.data);
+    private static int GetCurrentLeaderBroker(){
+        ResponseBase response = null;
+        try {
+            response = SendTo("127.0.0.1", frontEndPort, "GetBroker", "");
+        } catch (IOException e) {
+            System.out.println("Failed to connect to FrontEnd Server.");
+        }
+
+        if (response.status.equals("OK")) {
+            currentLeaderBroker = Integer.parseInt(response.data);
+            return currentLeaderBroker;
         } else {
-            System.out.println(resp.status);
+            System.out.println(response.status);
             return -1;
         }
     }
 };
-
-
-//
-//class BrokerState {
-//    private String serializedData = null;
-//    private ConcurrentHashMap<String, HashMap<String, String>> topicToMsgList = null;
-//    private ConcurrentHashMap<String, HashMap<String, LocalDateTime>> subscriberToTopic = null;
-//
-//
-//    public BrokerState(String serializedData) {
-//        this.serializedData = serializedData;
-//    }
-//
-//    public BrokerState(ConcurrentHashMap<String, HashMap<String, String>> topicToMsgList, ConcurrentHashMap<String, HashMap<String, LocalDateTime>> subscriberToTopic) {
-//        this.subscriberToTopic = subscriberToTopic;
-//        this.topicToMsgList = topicToMsgList;
-//    }
-//
-//
-//    public String getSerializedData() {
-//        if (serializedData == null) {
-//            Serialize();
-//        }
-//        return serializedData;
-//    }
-//
-//    public ConcurrentHashMap<String, HashMap<String, String>> getTopicToMsgList() {
-//        if (topicToMsgList == null) {
-//            Deserialize();
-//        }
-//        return topicToMsgList;
-//    }
-//
-//    public ConcurrentHashMap<String, HashMap<String, LocalDateTime>> getSubscriberToTopic() {
-//        if (subscriberToTopic == null) {
-//            Deserialize();
-//        }
-//        return subscriberToTopic;
-//    }
-//
-//    // From data structure to string
-//    private void Serialize() {
-////        Gson gson = new Gson();
-//        JsonObject json1 = new JsonObject();
-//
-//        for (String key : subscriberToTopic.keySet()) {
-//            JsonObject jsonObject = new Gson().fromJson(String.valueOf(subscriberToTopic.get(key)), JsonObject.class);
-//            json1.add(key.toString(), jsonObject);
-////            HashMap val = subscriberToTopic.get(key);
-////
-////            for(Object subkey: val.keySet()){
-////                String topicToLastReadtime = subkey.toString()+val.get(subkey).toString();
-////                JsonObject jsonObject = new Gson().fromJson(topicToLastReadtime,JsonObject.class);
-////                json1.add(key.toString(),jsonObject);
-////            }
-//        }
-//        System.out.println(json1);
-//    }
-//
-//    // From string to data structure.
-//    private void Deserialize() {
-//        // From
-//
-//    }
-//}

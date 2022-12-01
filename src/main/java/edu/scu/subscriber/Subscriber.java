@@ -26,7 +26,6 @@ public class Subscriber {
         }
         System.out.println("Started subscriber at local port " + subscribeID);
 
-
         // Get leader from FrontEnd Server.
         GetCurrentBrokerThread();
 //        brokerPort = GetCurrentBroker();
@@ -37,13 +36,10 @@ public class Subscriber {
         Scanner scanner = new Scanner(System.in);
         String publisherMsg = scanner.nextLine();
 
-
         // TODO:Waiting for updates;
         brokerSocket = new Socket("127.0.0.1", brokerPort);
         Sub(publisherMsg);
-
         StartUpdateSubMessageThread();
-
     }
 
     // data: id + multiple topic
@@ -63,19 +59,24 @@ public class Subscriber {
                 try {
                     sleep(1000);
                     brokerPort = GetCurrentBroker();
-                } catch (IOException | InterruptedException e) {
+                } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
             }
         }).start();
     }
 
-    private static int GetCurrentBroker() throws IOException {
-        ResponseBase response = SendTo("127.0.0.1", 8800, "GetBroker", "");
-        if (response.status.equals("OK")) {
-            return Integer.parseInt(response.data);
-        } else {
-            //TODO
+    private static int GetCurrentBroker()  {
+        ResponseBase response = null;
+        try {
+            response = SendTo("127.0.0.1", 8800, "GetBroker", "");
+            if (response.status.equals("OK")) {
+                return Integer.parseInt(response.data);
+            } else {
+                System.out.println("GetCurrentBroker: FrontEnd returned error: " + response.status);
+            }
+        } catch (IOException e) {
+            System.out.println("Failed to get current leader broker from FrontEnd Server");
         }
         return 0;
     }
@@ -94,10 +95,10 @@ public class Subscriber {
                     } else {
                         System.out.println("Error update subscriber message");
                     }
-                } catch (IOException | InterruptedException e) {
-                    System.out.println("ERROR: receiving update from broker, will try again later");
+                } catch ( InterruptedException e) {
                     e.printStackTrace();
-//                    throw new RuntimeException(e);
+                } catch (IOException e) {
+                    System.out.println("Failed to get updates on subscribed topics, will retry later");
                 }
             }
         }).start();

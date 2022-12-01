@@ -104,7 +104,12 @@ public class FrontEnd {
             System.out.println("No active broker!");
             return -1;
         }
-        return brokers.get(0);
+        int newLeader = brokers.get(0);
+        if (currBrokerLeader != newLeader) {
+            System.out.println("Leader changed to " + newLeader);
+        }
+        currBrokerLeader = newLeader;
+        return newLeader;
         //
     }
     
